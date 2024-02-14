@@ -5,16 +5,42 @@
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <title>Physically Based Rendering</title>
 
-    <link data-trunk rel="css" href="src/app.css"/>
     <base data-trunk-public-url/>
+
+    <style>
+        :focus {
+            outline: none;
+        }
+
+        body {
+            margin: 0px;
+            background: #fff;
+            font-family: "Calibri", "Arial", sans-serif;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .root {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .main-canvas {
+            margin: 0;
+            /* This allows the flexbox to grow to max size, this is needed for WebGPU */
+            flex: 1;
+            /* This forces CSS to ignore the width/height of the canvas, this is needed for WebGL */
+            contain: size;
+        }
+    </style>
 </head>
 <body>
     <link data-trunk rel="rust" href="Cargo.toml" data-target-name="renderer"/>
-    <script data-trunk src="src/script.js"></script>
     <div class="root">
-        <h1>Physically based rendering in rust with wgpu</h1>
         <canvas class="main-canvas" id="canvas"></canvas>
     </div>
 </body>
-<script>testFromJavaScript();</script>
 </html>

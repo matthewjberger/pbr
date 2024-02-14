@@ -1,5 +1,13 @@
 #![recursion_limit = "1024"]
 
+mod app;
+mod gltf;
+mod gpu;
+mod io;
+mod render;
+mod view;
+mod world;
+
 #[cfg(target_arch = "wasm32")]
 use console_error_panic_hook::set_once as set_panic_hook;
 
@@ -8,6 +16,7 @@ use wasm_bindgen::prelude::*;
 
 pub fn start_app() {
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
+    event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
 
     #[allow(unused_mut)]
     let mut builder = winit::window::WindowBuilder::new();
@@ -31,13 +40,13 @@ pub fn start_app() {
     #[cfg(not(target_arch = "wasm32"))]
     {
         env_logger::init();
-        pollster::block_on(run_app(event_loop, window));
+        pollster::block_on(app::run_app(Viewer::default(), event_loop, window));
     }
     #[cfg(target_arch = "wasm32")]
     {
         std::panic::set_hook(Box::new(console_error_panic_hook::hook));
         console_log::init().expect("could not initialize logger");
-        wasm_bindgen_futures::spawn_local(run_app(event_loop, window));
+        wasm_bindgen_futures::spawn_local(app::run_app(Viewer::default(), event_loop, window));
     }
 }
 
@@ -55,138 +64,106 @@ pub async fn run() {
     start_app();
 }
 
-async fn run_app(event_loop: winit::event_loop::EventLoop<()>, window: winit::window::Window) {
-    let mut size = window.inner_size();
-    size.width = size.width.max(1);
-    size.height = size.height.max(1);
+#[derive(Default)]
+pub struct Viewer;
 
-    let instance = wgpu::Instance::default();
+impl app::State for Viewer {
+    fn initialize(&mut self, context: &mut app::Context) {
+        context.import_slice(include_bytes!("../glb/DamagedHelmet.glb"));
+    }
 
-    let surface = instance.create_surface(&window).unwrap();
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            // Request an adapter which can render to our surface
-            compatible_surface: Some(&surface),
-        })
-        .await
-        .expect("Failed to find an appropriate adapter");
+    fn update(&mut self, context: &mut app::Context) {
+        camera_system(context);
+    }
+}
 
-    // Create the logical device and command queue
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
-            },
-            None,
-        )
-        .await
-        .expect("Failed to create device");
+fn camera_system(context: &mut app::Context) {
+    let Some(scene_index) = context.world.default_scene_index else {
+        return;
+    };
 
-    // Load the shaders from disk
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: None,
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("shader.wgsl"))),
-    });
+    let scene = &context.world.scenes[scene_index];
 
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: None,
-        bind_group_layouts: &[],
-        push_constant_ranges: &[],
-    });
+    let camera_node_index = scene.graph[scene
+        .default_camera_graph_node_index
+        .expect("No camera is available in the active scene!")];
+    let camera_node = &mut context.world.nodes[camera_node_index];
 
-    let swapchain_capabilities = surface.get_capabilities(&adapter);
-    let swapchain_format = swapchain_capabilities.formats[0];
+    let metadata = &context.world.metadata[camera_node.metadata_index];
+    if metadata.name != "Main Camera" {
+        return;
+    }
 
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: "vs_main",
-            buffers: &[],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: "fs_main",
-            targets: &[Some(swapchain_format.into())],
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
-    });
+    let transform = &mut context.world.transforms[camera_node.transform_index];
+    let camera = &mut context.world.cameras[camera_node.camera_index.unwrap()];
 
-    let mut config = surface
-        .get_default_config(&adapter, size.width, size.height)
-        .unwrap();
-    surface.configure(&device, &config);
+    let mut sync_transform = false;
 
-    let window = &window;
-    event_loop
-        .run(move |event, target| {
-            // Have the closure take ownership of the resources.
-            // `event_loop.run` never returns, therefore we must do this to ensure
-            // the resources are properly cleaned up.
-            let _ = (&instance, &adapter, &shader, &pipeline_layout);
+    let delta_time = 0.01; // simulate delta time for wasm
+    let speed = 2.0 * delta_time as f32;
 
-            if let winit::event::Event::WindowEvent {
-                window_id: _,
-                event,
-            } = event
-            {
-                match event {
-                    winit::event::WindowEvent::Resized(new_size) => {
-                        // Reconfigure the surface with the new size
-                        config.width = new_size.width.max(1);
-                        config.height = new_size.height.max(1);
-                        surface.configure(&device, &config);
-                        // On macos the window needs to be redrawn manually after resizing
-                        window.request_redraw();
-                    }
-                    winit::event::WindowEvent::RedrawRequested => {
-                        let frame = surface
-                            .get_current_texture()
-                            .expect("Failed to acquire next swap chain texture");
-                        let view = frame
-                            .texture
-                            .create_view(&wgpu::TextureViewDescriptor::default());
-                        let mut encoder =
-                            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                                label: None,
-                            });
-                        {
-                            let mut rpass =
-                                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                                    label: None,
-                                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                        view: &view,
-                                        resolve_target: None,
-                                        ops: wgpu::Operations {
-                                            load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
-                                            store: wgpu::StoreOp::Store,
-                                        },
-                                    })],
-                                    depth_stencil_attachment: None,
-                                    timestamp_writes: None,
-                                    occlusion_query_set: None,
-                                });
-                            rpass.set_pipeline(&render_pipeline);
-                            rpass.draw(0..3, 0..1);
-                        }
+    if context.io.is_key_pressed(winit::keyboard::KeyCode::KeyW) {
+        camera.orientation.offset -= camera.orientation.direction() * speed;
+        sync_transform = true;
+    }
 
-                        queue.submit(Some(encoder.finish()));
-                        frame.present();
-                    }
-                    winit::event::WindowEvent::CloseRequested => target.exit(),
-                    _ => {}
-                };
-            }
-        })
-        .unwrap();
+    if context.io.is_key_pressed(winit::keyboard::KeyCode::KeyA) {
+        camera.orientation.offset += camera.orientation.right() * speed;
+        sync_transform = true;
+    }
+
+    if context.io.is_key_pressed(winit::keyboard::KeyCode::KeyS) {
+        camera.orientation.offset += camera.orientation.direction() * speed;
+        sync_transform = true;
+    }
+
+    if context.io.is_key_pressed(winit::keyboard::KeyCode::KeyD) {
+        camera.orientation.offset -= camera.orientation.right() * speed;
+        sync_transform = true;
+    }
+
+    if context.io.is_key_pressed(winit::keyboard::KeyCode::Space) {
+        camera.orientation.offset += camera.orientation.up() * speed;
+        sync_transform = true;
+    }
+
+    if context
+        .io
+        .is_key_pressed(winit::keyboard::KeyCode::ShiftLeft)
+    {
+        camera.orientation.offset -= camera.orientation.up() * speed;
+        sync_transform = true;
+    }
+
+    camera
+        .orientation
+        .zoom(6.0 * context.io.mouse.wheel_delta.y * (delta_time as f32));
+
+    if context.io.mouse.is_middle_clicked {
+        camera
+            .orientation
+            .pan(&(context.io.mouse.position_delta * delta_time as f32));
+        sync_transform = true;
+    }
+
+    if context.io.mouse.is_right_clicked
+        && context.io.mouse.position_delta != nalgebra_glm::vec2(0.0, 0.0)
+    {
+        let mut delta = context.io.mouse.position_delta * delta_time as f32;
+        delta.x *= -1.0;
+        delta.y *= -1.0;
+        camera.orientation.rotate(&delta);
+        sync_transform = true;
+    }
+
+    if context.io.touch.moved {
+        let delta = context.io.touch.touch_delta * delta_time as f32 * 0.02; // arbitrary scaledown touch input
+        camera.orientation.rotate(&delta);
+        sync_transform = true;
+    }
+
+    if sync_transform {
+        transform.translation = camera.orientation.position();
+        transform.rotation = camera.orientation.look_at_offset();
+    }
 }
