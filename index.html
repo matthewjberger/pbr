@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Physically Based Rendering</title>
+
+    <link data-trunk rel="css" href="src/app.css"/>
+    <base data-trunk-public-url/>
+</head>
+<body>
+    <link data-trunk rel="rust" href="Cargo.toml" data-target-name="renderer"/>
+    <script data-trunk src="src/script.js"></script>
+    <div class="root">
+        <h1>Physically based rendering in rust with wgpu</h1>
+        <canvas class="main-canvas" id="canvas"></canvas>
+    </div>
+</body>
+<script>testFromJavaScript();</script>
+</html>
