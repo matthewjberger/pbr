@@ -12,6 +12,7 @@ pub struct WorldRender {
     pub line_pipeline: wgpu::RenderPipeline,
     pub line_strip_pipeline: wgpu::RenderPipeline,
     pub triangle_strip_pipeline: wgpu::RenderPipeline,
+    pub dirty: bool,
 }
 
 impl WorldRender {
@@ -231,6 +232,7 @@ impl WorldRender {
             line_pipeline,
             line_strip_pipeline,
             triangle_strip_pipeline,
+            dirty: true,
         }
     }
 
@@ -259,22 +261,25 @@ impl WorldRender {
         );
 
         let mut mesh_ubos = vec![DynamicUniform::default(); world.transforms.len()];
-        scene
-            .graph
-            .node_indices()
-            .enumerate()
-            .for_each(|(ubo_index, graph_node_index)| {
-                mesh_ubos[ubo_index] = DynamicUniform {
-                    model: world.global_transform(&scene.graph, graph_node_index),
-                };
-            });
-        gpu.queue
-            .write_buffer(&self.dynamic_uniform_buffer, 0, unsafe {
-                std::slice::from_raw_parts(
-                    mesh_ubos.as_ptr() as *const u8,
-                    mesh_ubos.len() * gpu.alignment() as usize,
-                )
-            });
+        if self.dirty {
+            scene
+                .graph
+                .node_indices()
+                .enumerate()
+                .for_each(|(ubo_index, graph_node_index)| {
+                    mesh_ubos[ubo_index] = DynamicUniform {
+                        model: world.global_transform(&scene.graph, graph_node_index),
+                    };
+                });
+            gpu.queue
+                .write_buffer(&self.dynamic_uniform_buffer, 0, unsafe {
+                    std::slice::from_raw_parts(
+                        mesh_ubos.as_ptr() as *const u8,
+                        mesh_ubos.len() * gpu.alignment() as usize,
+                    )
+                });
+            self.dirty = false;
+        }
 
         render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
 
