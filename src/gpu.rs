@@ -30,27 +30,14 @@ impl<'window> Gpu<'window> {
             .await
             .expect("Failed to request adapter!");
 
-        let required_features = wgpu::Features::PUSH_CONSTANTS;
-
-        let required_limits = {
-            // Use the texture resolution limits from the adapter to support images the size of the surface
-            #[cfg(target_arch = "wasm32")]
-            let mut limits = wgpu::Limits::downlevel_webgl2_defaults();
-            #[cfg(not(target_arch = "wasm32"))]
-            let mut limits = wgpu::Limits::default();
-            limits.max_push_constant_size = 256;
-            limits
-        }
-        .using_resolution(adapter.limits());
-
         let (device, queue) = {
             log::info!("WGPU Adapter Features: {:#?}", adapter.features());
             adapter
                 .request_device(
                     &wgpu::DeviceDescriptor {
                         label: Some("WGPU Device"),
-                        required_features,
-                        required_limits,
+                        required_features: wgpu::Features::default(),
+                        required_limits: wgpu::Limits::default().using_resolution(adapter.limits()),
                     },
                     None,
                 )

@@ -355,12 +355,6 @@ impl WorldRender {
                                 }
                             };
 
-                            render_pass.set_push_constants(
-                                wgpu::ShaderStages::VERTEX_FRAGMENT,
-                                0,
-                                bytemuck::cast_slice(&[shader_material]),
-                            );
-
                             if primitive.number_of_indices > 0 {
                                 let index_offset = primitive.index_offset as u32;
                                 let number_of_indices =
@@ -551,10 +545,7 @@ fn create_pipeline(
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts,
-            push_constant_ranges: &[wgpu::PushConstantRange {
-                stages: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                range: 0..32, // 1 byte
-            }],
+            push_constant_ranges: &[],
         });
 
     gpu.device
@@ -676,15 +667,6 @@ struct DynamicUniform {
 
 @group(1) @binding(0)
 var<uniform> mesh_ubo: DynamicUniform;
-
-struct Material {
-    base_color: vec4<f32>,
-    base_texture_index: i32,
-    alpha_mode: i32,
-    alpha_cutoff: f32,
-    sampler_index: i32,
-}
-var<push_constant> material: Material;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
